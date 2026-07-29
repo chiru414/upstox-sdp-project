@@ -62,6 +62,21 @@ def candles_daily_quarantine():
     )
 
 # ============================================================
+# QUARANTINE — hourly candles
+# ============================================================
+@dp.table(name="candles_hourly_clean")
+@dp.expect_or_drop("has_candles", "size(data.candles) > 0")
+def candles_hourly_clean():
+    return spark.readStream.table("candles_hourly_bronze")
+
+@dp.table(name="candles_hourly_quarantine")
+def candles_hourly_quarantine():
+    return (
+        spark.readStream.table("candles_hourly_bronze")
+        .where("size(data.candles) = 0 OR data.candles IS NULL")
+    )
+
+# ============================================================
 # SILVER — instruments_current, SCD Type 2 via AUTO CDC FROM SNAPSHOT
 # Reads each timestamped instrument-master snapshot file, in order
 # ============================================================
@@ -131,6 +146,31 @@ dp.create_auto_cdc_from_snapshot_flow(
 )
 
 # ============================================================
+# SILVER — hourly candles, flattened
+# ============================================================
+
+@dp.table(name="candles_hourly_silver")
+def candles_hourly_silver():
+    from pyspark.sql.functions import explode, col
+    df = spark.readStream.table("candles_hourly_clean")
+    exploded = df.select(
+        col("_symbol").alias("symbol"),
+        col("_ingested_at").alias("ingested_at"),
+        explode(col("data.candles")).alias("candle")
+    )
+    return exploded.select(
+        col("symbol"),
+        col("ingested_at"),
+        col("candle")[0].cast("timestamp").alias("candle_ts"),
+        col("candle")[1].cast("double").alias("open"),
+        col("candle")[2].cast("double").alias("high"),
+        col("candle")[3].cast("double").alias("low"),
+        col("candle")[4].cast("double").alias("close"),
+        col("candle")[5].cast("long").alias("volume"),
+        col("candle")[6].cast("long").alias("open_interest"),
+    )
+
+# ============================================================
 # GOLD 1 — daily % move, ranked per day (window function objective)
 # ============================================================
 @dp.materialized_view(name="symbol_daily_performance_gold")
@@ -190,3 +230,24 @@ def instrument_churn_gold():
     return fo.groupBy("underlying_symbol", "__START_AT").agg(
         count("*").alias("active_contract_count")
     ).orderBy("underlying_symbol", "__START_AT")
+
+# ============================================================
+# GOLD — intraday volatility (rolling window, distinct from
+# the daily Gold's RANK-based approach — variety on purpose)
+# ============================================================
+@dp.materialized_view(name="intraday_volatility_gold")
+def intraday_volatility_gold():
+    from pyspark.sql.functions import stddev, avg, col
+    from pyspark.sql.window import Window
+
+    df = spark.read.table("candles_hourly_silver")
+    w = Window.partitionBy("symbol").orderBy("candle_ts").rowsBetween(-5, 0)
+
+    return df.withColumn(
+        "rolling_avg_close_6h", avg("close").over(w)
+    ).withColumn(
+        "rolling_volatility_6h", stddev("close").over(w)
+    ).select(
+        "symbol", "candle_ts", "close",
+        "rolling_avg_close_6h", "rolling_volatility_6h"
+    )
