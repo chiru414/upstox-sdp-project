@@ -25,7 +25,6 @@ def resolve_instrument_keys(rows):
     return keys
 
 def ingest_instrument_snapshot():
-    """Full daily snapshot of NSE F&O + EQ rows for our watchlist underlyings — the AUTO CDC FROM SNAPSHOT subject."""
     raw_bytes = fetch_instrument_master_bytes()
     ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
 
@@ -34,8 +33,8 @@ def ingest_instrument_snapshot():
         text_stream = io.TextIOWrapper(gz, encoding="utf-8")
         reader = csv.DictReader(text_stream)
         for row in reader:
-            name = (row.get("name") or "").upper()
-            if row.get("exchange") in ("NSE_EQ", "NSE_FO") and any(w in name for w in WATCHLIST):
+            symbol = (row.get("tradingsymbol") or "").upper()
+            if row.get("exchange") in ("NSE_EQ", "NSE_FO") and any(symbol.startswith(w) for w in WATCHLIST):
                 rows.append(row)
 
     os.makedirs(DIR_INSTRUMENTS, exist_ok=True)

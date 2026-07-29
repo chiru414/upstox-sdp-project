@@ -54,6 +54,28 @@ def candles_daily_quarantine():
 # Reads each timestamped instrument-master snapshot file, in order
 # ============================================================
 
+@dp.table(name="candles_daily_silver")
+def candles_daily_silver():
+    from pyspark.sql.functions import explode, col
+
+    df = spark.readStream.table("candles_daily_clean")
+    exploded = df.select(
+        col("_symbol").alias("symbol"),
+        col("_ingested_at").alias("ingested_at"),
+        explode(col("data.candles")).alias("candle")
+    )
+    return exploded.select(
+        col("symbol"),
+        col("ingested_at"),
+        col("candle")[0].cast("timestamp").alias("candle_ts"),
+        col("candle")[1].cast("double").alias("open"),
+        col("candle")[2].cast("double").alias("high"),
+        col("candle")[3].cast("double").alias("low"),
+        col("candle")[4].cast("double").alias("close"),
+        col("candle")[5].cast("long").alias("volume"),
+        col("candle")[6].cast("long").alias("open_interest"),
+    )
+
 def next_snapshot_and_version(latest_snapshot_version):
     files = dbutils.fs.ls(f"{VOL_ROOT}/instruments/")
     versions = []
