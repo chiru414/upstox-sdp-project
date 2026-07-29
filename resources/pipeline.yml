@@ -1,0 +1,14 @@
+resources:
+  pipelines:
+    stock_pipeline:
+      name: stock_sdp_pipeline
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      root_path: "../src"
+      libraries:
+        - file:
+            path: ../src/pipeline.py
+      configuration:
+        catalog: ${var.catalog}
+        schema: ${var.schema}
