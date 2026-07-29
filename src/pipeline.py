@@ -10,6 +10,7 @@ VOL_ROOT = f"/Volumes/{CATALOG}/{SCHEMA}/raw_data"
 # ============================================================
 # BRONZE — candles (daily + hourly), via Auto Loader
 # ============================================================
+CANDLES_SCHEMA = "status STRING, data STRUCT<candles: ARRAY<ARRAY<STRING>>>, _symbol STRING, _ingested_at STRING"
 
 @dp.table(name="candles_daily_bronze")
 def candles_daily_bronze():
@@ -17,6 +18,7 @@ def candles_daily_bronze():
         spark.readStream.format("cloudFiles")
         .option("cloudFiles.format", "json")
         .option("cloudFiles.schemaLocation", f"{VOL_ROOT}/candles_daily/_schema")
+        .schema(CANDLES_SCHEMA)
         .load(f"{VOL_ROOT}/candles_daily")
     )
 
@@ -26,6 +28,7 @@ def candles_hourly_bronze():
         spark.readStream.format("cloudFiles")
         .option("cloudFiles.format", "json")
         .option("cloudFiles.schemaLocation", f"{VOL_ROOT}/candles_hourly/_schema")
+        .schema(CANDLES_SCHEMA)
         .load(f"{VOL_ROOT}/candles_hourly")
     )
 
