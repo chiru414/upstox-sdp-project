@@ -20,11 +20,12 @@ WATCHLIST = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "SBIN"]
 def resolve_instrument_keys(rows):
     keys = {}
     for row in rows:
-        if row.get("segment") == "NSE_EQ" and row.get("trading_symbol") in WATCHLIST:
-            keys[row["trading_symbol"]] = row["instrument_key"]
+        if row.get("exchange") == "NSE_EQ" and row.get("tradingsymbol") in WATCHLIST:
+            keys[row["tradingsymbol"]] = row["instrument_key"]
     return keys
 
 def ingest_instrument_snapshot():
+    """Full daily snapshot of NSE F&O + EQ rows for our watchlist underlyings — the AUTO CDC FROM SNAPSHOT subject."""
     raw_bytes = fetch_instrument_master_bytes()
     ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
 
@@ -34,7 +35,7 @@ def ingest_instrument_snapshot():
         reader = csv.DictReader(text_stream)
         for row in reader:
             name = (row.get("name") or "").upper()
-            if row.get("segment") in ("NSE_EQ", "NSE_FO") and any(w in name for w in WATCHLIST):
+            if row.get("exchange") in ("NSE_EQ", "NSE_FO") and any(w in name for w in WATCHLIST):
                 rows.append(row)
 
     os.makedirs(DIR_INSTRUMENTS, exist_ok=True)
@@ -59,6 +60,7 @@ def ingest_candles(instrument_keys, unit, interval, lookback_days, dest_dir):
 
 if __name__ == "__main__":
     eq_keys = ingest_instrument_snapshot()
+    print(f"Resolved instrument keys: {eq_keys}")
     ingest_candles(eq_keys, "days", "1", lookback_days=30, dest_dir=DIR_DAILY)
     ingest_candles(eq_keys, "hours", "1", lookback_days=7, dest_dir=DIR_HOURLY)
     print("Ingestion cycle complete.")
