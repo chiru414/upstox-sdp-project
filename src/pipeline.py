@@ -1,11 +1,23 @@
 from pyspark import pipelines as dp
-from pyspark.sql.functions import col
 import re
+from pyspark.sql.functions import (
+    col, lag, rank, row_number, round as sql_round,
+    to_date, when, lit, count
+)
+from pyspark.sql.window import Window
 
 CATALOG = spark.conf.get("catalog", "stock_catalog")
 SCHEMA = spark.conf.get("schema", "dev")
+WATCHLIST = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "SBIN"]
 
 VOL_ROOT = f"/Volumes/{CATALOG}/{SCHEMA}/raw_data"
+
+def _underlying_symbol_expr():
+    expr = None
+    for w in WATCHLIST:
+        cond = col("tradingsymbol").startswith(w)
+        expr = when(cond, lit(w)) if expr is None else expr.when(cond, lit(w))
+    return expr
 
 # ============================================================
 # BRONZE — candles (daily + hourly), via Auto Loader
@@ -117,3 +129,64 @@ dp.create_auto_cdc_from_snapshot_flow(
     keys=["instrument_key"],
     stored_as_scd_type=2,
 )
+
+# ============================================================
+# GOLD 1 — daily % move, ranked per day (window function objective)
+# ============================================================
+@dp.materialized_view(name="symbol_daily_performance_gold")
+def symbol_daily_performance_gold():
+    df = spark.read.table("candles_daily_silver")
+    w_lag = Window.partitionBy("symbol").orderBy("candle_ts")
+    with_prev = df.withColumn("prev_close", lag("close").over(w_lag))
+    with_pct = with_prev.withColumn(
+        "pct_change",
+        sql_round(((col("close") - col("prev_close")) / col("prev_close")) * 100, 2)
+    )
+    w_rank = Window.partitionBy("candle_ts").orderBy(col("pct_change").desc())
+    return with_pct.withColumn("daily_rank", rank().over(w_rank)).select(
+        "symbol", "candle_ts", "close", "prev_close", "pct_change", "daily_rank"
+    )
+
+# ============================================================
+# GOLD 2 — F&O contracts enriched with underlying's point-in-time price
+# (real SCD2 point-in-time join, no account data)
+# ============================================================
+@dp.materialized_view(name="fo_contracts_enriched_gold")
+def fo_contracts_enriched_gold():
+    fo = (
+        spark.read.table("instruments_current")
+        .filter(col("exchange") == "NSE_FO")
+        .withColumn("underlying_symbol", _underlying_symbol_expr())
+        .withColumn("snapshot_date", to_date(col("__START_AT"), "yyyyMMdd'T'HHmmss"))
+    )
+    candles = (
+        spark.read.table("candles_daily_silver")
+        .withColumn("trade_date", to_date(col("candle_ts")))
+    )
+    joined = fo.join(
+        candles,
+        (fo.underlying_symbol == candles.symbol) & (candles.trade_date <= fo.snapshot_date),
+        "left"
+    )
+    w = Window.partitionBy("instrument_key").orderBy(col("trade_date").desc())
+    ranked = joined.withColumn("rn", row_number().over(w)).filter(col("rn") == 1)
+    return ranked.select(
+        col("instrument_key"), col("tradingsymbol"), col("underlying_symbol"),
+        col("expiry"), col("strike"), col("option_type"),
+        col("trade_date").alias("underlying_price_date"),
+        col("close").alias("underlying_close_price"),
+    )
+
+# ============================================================
+# GOLD 3 — active F&O contract counts per underlying (SCD2 as a metric)
+# ============================================================
+@dp.materialized_view(name="instrument_churn_gold")
+def instrument_churn_gold():
+    fo = (
+        spark.read.table("instruments_current")
+        .filter((col("exchange") == "NSE_FO") & col("__END_AT").isNull())
+        .withColumn("underlying_symbol", _underlying_symbol_expr())
+    )
+    return fo.groupBy("underlying_symbol", "__START_AT").agg(
+        count("*").alias("active_contract_count")
+    ).orderBy("underlying_symbol", "__START_AT")
