@@ -5,11 +5,11 @@ never touches account-specific data.
 """
 import requests
 
-BASE_URL = "https://api.upstox.com/v2"
+BASE_URL_V3 = "https://api.upstox.com/v3"
 INSTRUMENTS_URL = "https://assets.upstox.com/market-quote/instruments/exchange/complete.csv.gz"
 
 def get_historical_candles(instrument_key, unit, interval, to_date, from_date):
-    url = f"{BASE_URL}/historical-candle/{instrument_key}/{unit}/{interval}/{to_date}/{from_date}"
+    url = f"{BASE_URL_V3}/historical-candle/{instrument_key}/{unit}/{interval}/{to_date}/{from_date}"
     resp = requests.get(url, headers={"Accept": "application/json"})
     resp.raise_for_status()
     return resp.json()
