@@ -1,0 +1,36 @@
+resources:
+  jobs:
+    stock_orchestration_job:
+      name: stock_end_to_end_orchestration
+      tasks:
+        - task_key: ingest
+          spark_python_task:
+            python_file: ../src/run_ingestion.py
+            parameters:
+              - "${var.catalog}"
+              - "${var.schema}"
+          environment_key: default
+
+        - task_key: run_pipeline
+          depends_on:
+            - task_key: ingest
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.stock_pipeline.id}
+
+        - task_key: purge
+          depends_on:
+            - task_key: run_pipeline
+          spark_python_task:
+            python_file: ../src/purge_job.py
+            parameters:
+              - "${var.catalog}"
+              - "${var.schema}"
+              - "7"
+          environment_key: default
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+            dependencies:
+              - requests
