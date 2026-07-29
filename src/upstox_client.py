@@ -14,8 +14,8 @@ def get_historical_candles(instrument_key, unit, interval, to_date, from_date):
     resp.raise_for_status()
     return resp.json()
 
-def download_instrument_master(dest_path):
+def fetch_instrument_master_bytes():
+    """Returns the raw gzipped instrument master bytes — no local disk write."""
     resp = requests.get(INSTRUMENTS_URL)
     resp.raise_for_status()
-    with open(dest_path, "wb") as f:
-        f.write(resp.content)
+    return resp.content

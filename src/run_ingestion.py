@@ -1,9 +1,11 @@
 import json
 import gzip
 import csv
+import io
+import os
 import datetime
 import sys
-from upstox_client import get_historical_candles, download_instrument_master
+from upstox_client import get_historical_candles, fetch_instrument_master_bytes
 
 CATALOG = sys.argv[1] if len(sys.argv) > 1 else "stock_catalog"
 SCHEMA = sys.argv[2] if len(sys.argv) > 2 else "dev"
@@ -23,19 +25,19 @@ def resolve_instrument_keys(rows):
     return keys
 
 def ingest_instrument_snapshot():
-    """Full daily snapshot of NSE F&O + EQ rows for our watchlist underlyings — the AUTO CDC FROM SNAPSHOT subject."""
-    tmp_path = "/tmp/instruments.csv.gz"
-    download_instrument_master(tmp_path)
+    raw_bytes = fetch_instrument_master_bytes()
     ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
 
     rows = []
-    with gzip.open(tmp_path, "rt") as f:
-        reader = csv.DictReader(f)
+    with gzip.GzipFile(fileobj=io.BytesIO(raw_bytes)) as gz:
+        text_stream = io.TextIOWrapper(gz, encoding="utf-8")
+        reader = csv.DictReader(text_stream)
         for row in reader:
             name = (row.get("name") or "").upper()
             if row.get("segment") in ("NSE_EQ", "NSE_FO") and any(w in name for w in WATCHLIST):
                 rows.append(row)
 
+    os.makedirs(DIR_INSTRUMENTS, exist_ok=True)
     out_path = f"{DIR_INSTRUMENTS}/instruments_{ts}.json"
     with open(out_path, "w") as f:
         json.dump(rows, f)
@@ -43,6 +45,7 @@ def ingest_instrument_snapshot():
     return resolve_instrument_keys(rows)
 
 def ingest_candles(instrument_keys, unit, interval, lookback_days, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
     today = datetime.date.today().isoformat()
     from_date = (datetime.date.today() - datetime.timedelta(days=lookback_days)).isoformat()
     ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
