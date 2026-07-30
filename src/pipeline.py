@@ -2,7 +2,7 @@ from pyspark import pipelines as dp
 import re
 from pyspark.sql.functions import (
     col, lag, rank, row_number, round as sql_round,
-    to_date, when, lit, count
+    to_date, when, lit, count, explode, from_utc_timestamp
 )
 from pyspark.sql.window import Window
 
@@ -83,8 +83,6 @@ def candles_hourly_quarantine():
 
 @dp.table(name="candles_daily_silver")
 def candles_daily_silver():
-    from pyspark.sql.functions import explode, col
-
     df = spark.readStream.table("candles_daily_clean")
     exploded = df.select(
         col("_symbol").alias("symbol"),
@@ -95,6 +93,7 @@ def candles_daily_silver():
         col("symbol"),
         col("ingested_at"),
         col("candle")[0].cast("timestamp").alias("candle_ts"),
+        to_date(from_utc_timestamp(col("candle")[0].cast("timestamp"), "Asia/Kolkata")).alias("candle_date_ist"),
         col("candle")[1].cast("double").alias("open"),
         col("candle")[2].cast("double").alias("high"),
         col("candle")[3].cast("double").alias("low"),
@@ -151,7 +150,6 @@ dp.create_auto_cdc_from_snapshot_flow(
 
 @dp.table(name="candles_hourly_silver")
 def candles_hourly_silver():
-    from pyspark.sql.functions import explode, col
     df = spark.readStream.table("candles_hourly_clean")
     exploded = df.select(
         col("_symbol").alias("symbol"),
@@ -162,6 +160,7 @@ def candles_hourly_silver():
         col("symbol"),
         col("ingested_at"),
         col("candle")[0].cast("timestamp").alias("candle_ts"),
+        to_date(from_utc_timestamp(col("candle")[0].cast("timestamp"), "Asia/Kolkata")).alias("candle_date_ist"),
         col("candle")[1].cast("double").alias("open"),
         col("candle")[2].cast("double").alias("high"),
         col("candle")[3].cast("double").alias("low"),
